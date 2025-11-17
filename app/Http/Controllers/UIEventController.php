@@ -5,6 +5,8 @@ namespace App\Http\Controllers;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Log;
+use App\Services\UI\Support\UIDebug;
+use App\Services\UI\UIChangesCollector;
 use App\Services\UI\Support\UIIdGenerator;
 
 /**
@@ -23,6 +25,9 @@ use App\Services\UI\Support\UIIdGenerator;
  */
 class UIEventController extends Controller
 {
+
+    public function __construct(protected UIChangesCollector $uiChanges) {}
+
     /**
      * Handle UI component event
      *
@@ -42,7 +47,6 @@ class UIEventController extends Controller
         ]);
 
         $componentId = $validated['component_id'];
-        $event = $validated['event'];
         $action = $validated['action'];
         $parameters = $validated['parameters'] ?? [];
 
@@ -91,20 +95,12 @@ class UIEventController extends Controller
                 ], 404);
             }
 
+            $this->uiChanges->setStorage($incomingStorage);
             $service->initializeEventContext($incomingStorage);
+            $service->$method($parameters);
+            $service->finalizeEventContext();
 
-            // Invoke handler method
-            $result = $service->$method($parameters);
-            if (!is_array($result)) {
-                $result = $service->finalizeEventContext();
-            }
-
-            $storageVariables = $service->getStorageVariables();
-
-            if (!empty($storageVariables)) {
-                $mergedStorage = array_merge($incomingStorage, $storageVariables);
-                $result['storage'] = ['usim' => encrypt(json_encode($mergedStorage))];
-            }
+            $result = $this->uiChanges->all();
 
             return response()->json($result);
         } catch (\Exception $e) {

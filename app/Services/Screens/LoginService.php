@@ -1,9 +1,11 @@
 <?php
-
 namespace App\Services\Screens;
 
+use App\Models\User;
+use App\Events\UsimEvent;
 use App\Services\UI\UIBuilder;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Http;
 use App\Services\UI\Enums\LayoutType;
 use App\Services\UI\AbstractUIService;
 use App\Services\UI\Enums\JustifyContent;
@@ -14,37 +16,39 @@ class LoginService extends AbstractUIService
 {
     protected string $store_email = 'admin@email.com';
     protected string $store_password = '2444';
+    protected string $store_token = '';
     protected LabelBuilder $lbl_login_result;
 
-    protected function buildBaseUI(...$params): UIContainer
+    protected function buildBaseUI(UIContainer $container, ...$params): void
     {
-        // Main container for the modal
-        $loginContainer = UIBuilder::container('main')
-            ->parent('main')
+        $container
+            ->title('User Login')
+            ->maxWidth('450px')
+            ->centerHorizontal()
+            ->shadow(3)
             ->padding('30px');
 
-        // Email input
-        $loginContainer->add(
+        $container->add(
             UIBuilder::input('login_email')
                 ->label('Email')
                 ->placeholder('Enter your email')
                 ->value($this->store_email)
                 ->type('email')
                 ->required(true)
+                ->width('100%')
         );
 
-        // Password input
-        $loginContainer->add(
+        $container->add(
             UIBuilder::input('login_password')
                 ->label('Password')
                 ->type('password')
                 ->placeholder('Enter your password')
                 ->value($this->store_password)
                 ->required(true)
+                ->width('100%')
         );
 
-        // Login result label
-        $loginContainer->add(
+        $container->add(
             UIBuilder::label('lbl_login_result')->text('')
         );
 
@@ -69,39 +73,79 @@ class LoginService extends AbstractUIService
                 ->action('submit_login')
         );
 
-        $loginContainer->add($buttonsContainer);
-
-        return $loginContainer;
+        $container->add($buttonsContainer);
     }
 
-    /**
-     * Handler to submit login (receives email and password from form)
-     */
     public function onSubmitLogin(array $params): void
     {
         $email = $params['login_email'] ?? '';
         $password = $params['login_password'] ?? '';
+        $remember = $params['remember'] ?? false;
 
-        // Here I use the Auth facade for authentication
-        if (Auth::attempt(['email' => $email, 'password' => $password])) {
-            // Authentication passed
-            // You can set user session or token here as needed
-            $user = Auth::user();
-            $this->store_email = $email;
-            $this->store_password = $password;
-            $this->lbl_login_result
-                ->text("Login successful!\nWelcome, " . $user->name . "!")
-                ->style('success');
-        } else {
-            // Authentication failed
-            $this->lbl_login_result
-                ->text('Invalid email or password.')
-                ->style('error');
+        $response = $this->httpPost('api.login', [
+            'email' => $email,
+            'password' => $password,
+            'remember' => $remember,
+        ]);
+
+        $message = $response['message'] ?? 'Login failed.';
+        $status = $response['status'] ?? 'error';
+        $this->toast($message, $status);
+        $this->lbl_login_result->text($message)->style($status);
+
+        if ($response['status'] === 'error') {
+            return;
         }
+
+        $this->store_token = $response['data']['token'] ?? '';
+        $this->store_email = $email;
+        $this->store_password = $password;
+
+        $user = User::where('email', $email)->first();
+        Auth::login($user);
+
+        // Disparar evento - TODOS los servicios en ui-services.php lo recibirán
+        event(new UsimEvent('logged_user', [
+            'user' => $user,
+            'timestamp' => now(),
+        ]));
+
+        $this->redirect();
+
+        // UIDebug::info('Token stored:', ['token' => $this->store_token]);
+
+
+        // // Here I use the Auth facade for authentication
+        // if (Auth::attempt(['email' => $email, 'password' => $password])) {
+        //     // Authentication passed
+        //     $user = User::where('email', $email)->first();
+
+        //     // Token con duración estándar (24 horas)
+        //     $token = $user->createToken('auth_token', ['*'], now()->addDay())->plainTextToken;
+
+        //     $this->store_token    = $token;
+        //     $this->store_email    = $email;
+        //     $this->store_password = $password;
+
+        //     // Disparar evento - TODOS los servicios en ui-services.php lo recibirán
+        //     event(new UsimEvent('logged_user', [
+        //         'user'      => $user,
+        //         'timestamp' => now(),
+        //     ]));
+        //     $this->toast("Login successful! Welcome, {$user->name}!", 'success');
+        //     $this->redirect();
+        // } else {
+        //     // Authentication failed
+        //     $this->lbl_login_result
+        //         ->text('Invalid email or password.')
+        //         ->style('error');
+        // }
     }
 
-    public function onCloseLoginDialog(array $params): void
+    private function httpPost(string $route, array $data): array
     {
-        // Logic to handle when the login dialog is closed
+        $url = route($route);
+        $response = Http::post($url, $data);
+        return $response->json();
     }
 }

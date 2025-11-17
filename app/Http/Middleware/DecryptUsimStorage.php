@@ -2,6 +2,7 @@
 
 namespace App\Http\Middleware;
 
+use App\Services\UI\Support\UIDebug;
 use Closure;
 use Illuminate\Http\Request;
 use Illuminate\Contracts\Encryption\DecryptException;
@@ -18,7 +19,7 @@ class DecryptUsimStorage
 {
     public function handle(Request $request, Closure $next)
     {
-        $storage = null;
+        $storage = [];
 
         if ($request->hasHeader('X-USIM-Storage')) {
             $encrypted = $request->header('X-USIM-Storage');
@@ -28,8 +29,6 @@ class DecryptUsimStorage
                 $decrypted = decrypt($encrypted);
                 $storage = json_decode($decrypted, true);
             } catch (DecryptException $e) {
-                // Si falla la desencriptación, continuar sin modificar el request
-                $storage = null;
             }
         }
 
@@ -37,8 +36,8 @@ class DecryptUsimStorage
         if (is_array($storage)) {
             $request->merge(['storage' => $storage]);
 
-            if (!empty($storage['token'])) {
-                $request->headers->set('Authorization', 'Bearer ' . $storage['token']);
+            if (!empty($storage['store_token'])) {
+                $request->headers->set('Authorization', 'Bearer ' . $storage['store_token']);
             }
         }
 
